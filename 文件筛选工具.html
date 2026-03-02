@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>文件关键词筛选与下载工具</title>
+    <!-- 引入Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入Font Awesome图标 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- 引入PDF解析库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <!-- 引入Word解析库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+
+    <script>
+        // 配置Tailwind自定义样式
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#165DFF',
+                        secondary: '#6B7280',
+                        success: '#00B42A',
+                        warning: '#FF7D00',
+                        danger: '#F53F3F',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+            .file-drop-area {
+                @apply border-2 border-dashed border-primary/30 rounded-lg p-8 text-center transition-all duration-300 hover:border-primary/60 hover:bg-primary/5;
+            }
+            .file-drop-area.active {
+                @apply border-primary bg-primary/10;
+            }
+            .card {
+                @apply bg-white rounded-lg shadow-md p-6 mb-6;
+            }
+            .btn {
+                @apply px-4 py-2 rounded-lg transition-all duration-200 font-medium;
+            }
+            .btn-primary {
+                @apply bg-primary text-white hover:bg-primary/90 active:bg-primary/80;
+            }
+            .btn-secondary {
+                @apply bg-gray-100 text-gray-800 hover:bg-gray-200 active:bg-gray-300;
+            }
+            .btn-success {
+                @apply bg-success text-white hover:bg-success/90 active:bg-success/80;
+            }
+            .form-input {
+                @apply w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="container mx-auto px-4 py-8 max-w-6xl">
+        <header class="mb-8 text-center">
+            <h1 class="text-[clamp(1.8rem,4vw,2.5rem)] font-bold text-gray-800 mb-2">文件关键词筛选工具</h1>
+            <p class="text-gray-600">上传Word/PDF文件，通过关键词筛选并下载所需文件</p>
+        </header>
+
+        <main>
+            <!-- 1. 文件上传区域 -->
+            <section class="card">
+                <h2 class="text-xl font-semibold mb-4 flex items-center">
+                    <i class="fas fa-upload text-primary mr-2"></i>文件上传
+                </h2>
+                
+                <div id="fileDropArea" class="file-drop-area mb-4">
+                    <input type="file" id="fileInput" class="hidden" multiple directory webkitdirectory mozdirectory />
+                    <p class="mb-2 text-gray-700">拖放文件夹/文件到此处，或</p>
+                    <button type="button" id="browseBtn" class="btn btn-primary">
+                        <i class="fas fa-folder-open mr-2"></i>选择文件/文件夹
+                    </button>
+                    <p class="mt-4 text-sm text-gray-500">支持格式：Word (.docx)、PDF (.pdf) | 可上传多个文件/整个文件夹</p>
+                </div>
+
+                <div id="fileList" class="hidden mb-4">
+                    <h3 class="font-medium text-gray-700 mb-2">已上传文件：</h3>
+                    <div id="uploadedFiles" class="max-h-40 overflow-y-auto bg-gray-50 p-3 rounded-lg"></div>
+                </div>
+
+                <div id="fileProcessing" class="hidden text-center py-2">
+                    <div class="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-primary mr-2"></div>
+                    <span>正在解析文件内容，请稍候...</span>
+                </div>
+            </section>
+
+            <!-- 2. 关键词输入区域 -->
+            <section class="card">
+                <h2 class="text-xl font-semibold mb-4 flex items-center">
+                    <i class="fas fa-tags text-primary mr-2"></i>关键词筛选
+                </h2>
+                
+                <div class="mb-4">
+                    <label for="keywordsInput" class="block text-gray-700 mb-2">自定义索引关键词</label>
+                    <div class="flex flex-col sm:flex-row gap-2">
+                        <input 
+                            type="text" 
+                            id="keywordsInput" 
+                            class="form-input" 
+                            placeholder="请输入关键词，多个关键词用 | 分割（例如：985|211|双一流）"
+                            disabled
+                        >
+                        <button id="searchBtn" class="btn btn-primary" disabled>
+                            <i class="fas fa-search mr-2"></i>筛选文件
+                        </button>
+                    </div>
+                    <p class="mt-1 text-sm text-gray-500">提示：关键词不区分大小写，会匹配文件内容中包含该关键词的文件</p>
+                </div>
+            </section>
+
+            <!-- 3. 结果展示区域 -->
+            <section class="card">
+                <h2 class="text-xl font-semibold mb-4 flex items-center">
+                    <i class="fas fa-list text-primary mr-2"></i>筛选结果
+                </h2>
+                
+                <div id="resultArea" class="mb-4">
+                    <p id="noResultText" class="text-gray-600">暂无筛选结果，请先上传文件并输入关键词进行筛选</p>
+                    <ul id="resultList" class="hidden space-y-2 max-h-60 overflow-y-auto"></ul>
+                </div>
+
+                <!-- 下载区域 -->
+                <div id="downloadArea" class="hidden pt-4 border-t border-gray-200">
+                    <div class="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                        <label class="flex items-center cursor-pointer">
+                            <input type="checkbox" id="selectAllFiles" class="mr-2 rounded text-primary">
+                            <span>全选文件</span>
+                        </label>
+                        <button id="downloadBtn" class="btn btn-success">
+                            <i class="fas fa-download mr-2"></i>下载选中文件
+                        </button>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <footer class="mt-12 text-center text-gray-500 text-sm">
+            <p>© 2025 文件关键词筛选工具 | 仅前端处理，文件不会上传至服务器</p>
+        </footer>
+    </div>
+
+    <script>
+        // 全局变量
+        let uploadedFiles = []; // 存储上传的文件及解析后的内容
+        let matchedFiles = [];  // 存储匹配关键词的文件
+
+        // DOM元素
+        const fileDropArea = document.getElementById('fileDropArea');
+        const fileInput = document.getElementById('fileInput');
+        const browseBtn = document.getElementById('browseBtn');
+        const fileList = document.getElementById('fileList');
+        const uploadedFilesEl = document.getElementById('uploadedFiles');
+        const fileProcessing = document.getElementById('fileProcessing');
+        const keywordsInput = document.getElementById('keywordsInput');
+        const searchBtn = document.getElementById('searchBtn');
+        const noResultText = document.getElementById('noResultText');
+        const resultList = document.getElementById('resultList');
+        const downloadArea = document.getElementById('downloadArea');
+        const selectAllFiles = document.getElementById('selectAllFiles');
+        const downloadBtn = document.getElementById('downloadBtn');
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', init);
+
+        function init() {
+            // 绑定事件
+            bindEvents();
+        }
+
+        // 事件绑定
+        function bindEvents() {
+            // 文件上传相关
+            browseBtn.addEventListener('click', () => fileInput.click());
+            fileInput.addEventListener('change', handleFileSelect);
+            
+            // 拖放功能
+            fileDropArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                fileDropArea.classList.add('active');
+            });
+            
+            fileDropArea.addEventListener('dragleave', () => {
+                fileDropArea.classList.remove('active');
+            });
+            
+            fileDropArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                fileDropArea.classList.remove('active');
+                handleDroppedFiles(e.dataTransfer.files);
+            });
+
+            // 关键词筛选
+            searchBtn.addEventListener('click', filterFilesByKeywords);
+            
+            // 全选/下载
+            selectAllFiles.addEventListener('change', toggleSelectAll);
+            downloadBtn.addEventListener('click', downloadSelectedFiles);
+        }
+
+        // 处理文件选择
+        function handleFileSelect(e) {
+            const files = e.target.files;
+            if (files.length > 0) {
+                processFiles(files);
+            }
+        }
+
+        // 处理拖放文件
+        function handleDroppedFiles(files) {
+            if (files.length > 0) {
+                processFiles(files);
+            }
+        }
+
+        // 处理上传的文件
+        async function processFiles(files) {
+            // 清空之前的文件
+            uploadedFiles = [];
+            
+            // 显示处理状态
+            fileList.classList.remove('hidden');
+            uploadedFilesEl.innerHTML = '<div class="text-gray-600">正在加载文件列表...</div>';
+            fileProcessing.classList.remove('hidden');
+            
+            // 启用关键词输入和搜索按钮
+            keywordsInput.disabled = false;
+            searchBtn.disabled = false;
+
+            try {
+                // 遍历所有文件
+                for (const file of files) {
+                    // 只处理PDF和Word文件
+                    if (file.type === 'application/pdf' || file.name.endsWith('.docx')) {
+                        let fileContent = '';
+                        
+                        // 解析文件内容
+                        if (file.type === 'application/pdf') {
+                            fileContent = await parsePDF(file);
+                        } else if (file.name.endsWith('.docx')) {
+                            fileContent = await parseDOCX(file);
+                        }
+
+                        // 存储文件信息
+                        uploadedFiles.push({
+                            name: file.name,
+                            size: formatFileSize(file.size),
+                            content: fileContent.toLowerCase(),
+                            file: file // 保存原始文件对象
+                        });
+                    }
+                }
+
+                // 更新文件列表显示
+                updateFileListDisplay();
+            } catch (error) {
+                console.error('文件处理失败:', error);
+                uploadedFilesEl.innerHTML = `<div class="text-danger">文件处理出错：${error.message}</div>`;
+            } finally {
+                // 隐藏处理状态
+                fileProcessing.classList.add('hidden');
+            }
+        }
+
+        // 解析PDF文件
+        async function parsePDF(file) {
+            const arrayBuffer = await file.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            
+            let textContent = '';
+            for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const content = await page.getTextContent();
+                const pageText = content.items.map(item => item.str).join(' ');
+                textContent += pageText + ' ';
+            }
+            
+            return textContent;
+        }
+
+        // 解析Word文件
+        async function parseDOCX(file) {
+            const arrayBuffer = await file.arrayBuffer();
+            const result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });
+            return result.value;
+        }
+
+        // 更新文件列表显示
+        function updateFileListDisplay() {
+            if (uploadedFiles.length === 0) {
+                uploadedFilesEl.innerHTML = '<div class="text-gray-600">未上传有效文件（仅支持PDF和DOCX）</div>';
+                return;
+            }
+
+            let html = '<ul class="space-y-1">';
+            uploadedFiles.forEach((file, index) => {
+                html += `
+                    <li class="flex justify-between items-center py-1 border-b border-gray-100 last:border-0">
+                        <span>
+                            <i class="${file.name.endsWith('.pdf') ? 'fas fa-file-pdf text-danger' : 'fas fa-file-word text-primary'} mr-2"></i>
+                            ${file.name}
+                        </span>
+                        <span class="text-sm text-gray-500">${file.size}</span>
+                    </li>
+                `;
+            });
+            html += '</ul>';
+            html += `<div class="mt-2 text-sm text-gray-500">总计：${uploadedFiles.length} 个文件</div>`;
+            
+            uploadedFilesEl.innerHTML = html;
+        }
+
+        // 根据关键词筛选文件
+        function filterFilesByKeywords() {
+            const keywordInput = keywordsInput.value.trim();
+            if (!keywordInput) {
+                alert('请输入筛选关键词');
+                return;
+            }
+
+            // 分割关键词（支持 | 分割）
+            const keywords = keywordInput.split('|').map(k => k.trim().toLowerCase()).filter(k => k);
+            
+            if (keywords.length === 0) {
+                alert('关键词格式不正确，请使用 | 分割多个关键词');
+                return;
+            }
+
+            // 筛选包含任意关键词的文件
+            matchedFiles = uploadedFiles.filter(file => {
+                return keywords.some(keyword => file.content.includes(keyword));
+            });
+
+            // 更新结果显示
+            updateResultDisplay();
+        }
+
+        // 更新筛选结果显示
+        function updateResultDisplay() {
+            noResultText.classList.toggle('hidden', matchedFiles.length > 0);
+            resultList.classList.toggle('hidden', matchedFiles.length === 0);
+            downloadArea.classList.toggle('hidden', matchedFiles.length === 0);
+
+            if (matchedFiles.length === 0) {
+                noResultText.textContent = '未找到包含指定关键词的文件';
+                return;
+            }
+
+            // 构建结果列表
+            let html = '';
+            matchedFiles.forEach((file, index) => {
+                html += `
+                    <li class="flex items-center py-2 border-b border-gray-100 last:border-0">
+                        <input type="checkbox" class="file-checkbox mr-3 rounded text-primary" data-index="${index}" checked>
+                        <span class="flex-1">
+                            <i class="${file.name.endsWith('.pdf') ? 'fas fa-file-pdf text-danger' : 'fas fa-file-word text-primary'} mr-2"></i>
+                            ${file.name}
+                        </span>
+                        <span class="text-sm text-gray-500">${file.size}</span>
+                    </li>
+                `;
+            });
+            
+            resultList.innerHTML = html;
+            // 绑定复选框事件
+            document.querySelectorAll('.file-checkbox').forEach(checkbox => {
+                checkbox.addEventListener('change', updateSelectAllState);
+            });
+        }
+
+        // 全选/取消全选
+        function toggleSelectAll() {
+            const checkboxes = document.querySelectorAll('.file-checkbox');
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = selectAllFiles.checked;
+            });
+        }
+
+        // 更新全选按钮状态
+        function updateSelectAllState() {
+            const checkboxes = document.querySelectorAll('.file-checkbox');
+            const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+            const someChecked = Array.from(checkboxes).some(cb => cb.checked);
+            
+            selectAllFiles.checked = allChecked;
+            selectAllFiles.indeterminate = someChecked && !allChecked;
+        }
+
+        // 下载选中的文件
+        function downloadSelectedFiles() {
+            // 获取选中的文件索引
+            const selectedIndexes = [];
+            document.querySelectorAll('.file-checkbox:checked').forEach(checkbox => {
+                selectedIndexes.push(parseInt(checkbox.dataset.index));
+            });
+
+            if (selectedIndexes.length === 0) {
+                alert('请至少选择一个文件进行下载');
+                return;
+            }
+
+            // 获取选中的文件
+            const selectedFiles = selectedIndexes.map(index => matchedFiles[index].file);
+
+            // 如果只有一个文件，直接下载
+            if (selectedFiles.length === 1) {
+                downloadFile(selectedFiles[0]);
+            } else {
+                // 多个文件打包下载（使用JSZip库，需要引入）
+                downloadFilesAsZip(selectedFiles);
+            }
+        }
+
+        // 下载单个文件
+        function downloadFile(file) {
+            const url = URL.createObjectURL(file);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = file.name;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        // 多个文件打包下载（动态加载JSZip）
+        async function downloadFilesAsZip(files) {
+            try {
+                // 动态加载JSZip和FileSaver
+                await Promise.all([
+                    loadScript('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'),
+                    loadScript('https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js')
+                ]);
+
+                const zip = new JSZip();
+                
+                // 将文件添加到压缩包
+                for (const file of files) {
+                    const arrayBuffer = await file.arrayBuffer();
+                    zip.file(file.name, arrayBuffer);
+                }
+
+                // 生成压缩包并下载
+                const content = await zip.generateAsync({ type: 'blob' });
+                saveAs(content, `筛选结果_${new Date().getTime()}.zip`);
+            } catch (error) {
+                console.error('打包下载失败:', error);
+                alert('打包下载失败，将逐个下载文件');
+                
+                // 降级方案：逐个下载
+                files.forEach(file => downloadFile(file));
+            }
+        }
+
+        // 辅助函数：动态加载脚本
+        function loadScript(url) {
+            return new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = url;
+                script.onload = resolve;
+                script.onerror = reject;
+                document.head.appendChild(script);
+            });
+        }
+
+        // 辅助函数：格式化文件大小
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+    </script>
+</body>
+</html>
